@@ -1,0 +1,417 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ingress-nginx
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ingress-nginx-admission
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: admission-webhook
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ingress-nginx
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+rules:
+- apiGroups: [""]
+  resources:
+  - namespaces
+  - configmaps
+  - pods
+  - secrets
+  - endpoints
+  - services
+  - events
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - patch
+  - update
+- apiGroups: ["networking.k8s.io"]
+  resources:
+  - ingresses
+  - ingresses/status
+  - ingressclasses
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+- apiGroups: ["coordination.k8s.io"]
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+- resourceNames:
+  - ingress-controller-leader
+  apiGroups: [""]
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - update
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ingress-nginx-admission
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: admission-webhook
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+rules:
+- apiGroups: [""]
+  resources:
+  - secrets
+  verbs:
+  - get
+  - create
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+rules:
+- apiGroups: [""]
+  resources:
+  - configmaps
+  - endpoints
+  - nodes
+  - pods
+  - secrets
+  - namespaces
+  - services
+  - events
+  verbs:
+  - list
+  - watch
+  - get
+  - create
+  - patch
+  - update
+- apiGroups: ["coordination.k8s.io"]
+  resources:
+  - leases
+  verbs:
+  - list
+  - watch
+  - get
+  - create
+  - update
+- apiGroups: ["networking.k8s.io"]
+  resources:
+  - ingresses
+  - ingresses/status
+  - ingressclasses
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ingress-nginx-admission
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: admission-webhook
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+rules:
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources:
+  - validatingwebhookconfigurations
+  verbs:
+  - get
+  - update
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ingress-nginx
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ingress-nginx
+subjects:
+- kind: ServiceAccount
+  name: ingress-nginx
+  namespace: toqqer-dev
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ingress-nginx-admission
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: admission-webhook
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ingress-nginx-admission
+subjects:
+- kind: ServiceAccount
+  name: ingress-nginx-admission
+  namespace: toqqer-dev
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ingress-nginx
+subjects:
+- kind: ServiceAccount
+  name: ingress-nginx
+  namespace: toqqer-dev
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ingress-nginx-admission
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: admission-webhook
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ingress-nginx-admission
+subjects:
+- kind: ServiceAccount
+  name: ingress-nginx-admission
+  namespace: toqqer-dev
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+data:
+  enable-vts-status: "false"
+  proxy-connect-timeout: "30"
+  proxy-read-timeout: "60"
+  proxy-send-timeout: "60"
+  use-proxy-protocol: "false"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingress-nginx-controller
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "1.3.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ingress-nginx
+    spec:
+      serviceAccountName: ingress-nginx
+      terminationGracePeriodSeconds: 300
+      containers:
+      - name: controller
+        image: k8s.gcr.io/ingress-nginx/controller:v1.3.0
+        args:
+        - /nginx-ingress-controller
+        - --configmap=$(POD_NAMESPACE)/ingress-nginx-controller
+        - --tcp-services-configmap=$(POD_NAMESPACE)/tcp-services
+        - --udp-services-configmap=$(POD_NAMESPACE)/udp-services
+        - --publish-service=$(POD_NAMESPACE)/ingress-nginx-controller
+        - --annotations-prefix=nginx.ingress.kubernetes.io
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+        - containerPort: 443
+          name: https
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 10254
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 10254
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 1
+          failureThreshold: 3
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-nginx-controller
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  - port: 443
+    targetPort: 443
+    protocol: TCP
+    name: https
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ingress-nginx-admission-create
+  namespace: toqqer-dev
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: admission-webhook
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ingress-nginx
+        app.kubernetes.io/component: admission-webhook
+    spec:
+      serviceAccountName: ingress-nginx-admission
+      containers:
+      - name: create
+        image: k8s.gcr.io/ingress-nginx/kube-webhook-certgen:v1.3.0
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - >
+          mkdir -p /certs && 
+          /usr/local/bin/kube-webhook-certgen create --host ingress-nginx-admission.toqqer-dev.svc --cert-dir /certs && 
+          cp /certs/tls.crt /certs/tls.key /certs/ca.crt /certs/webhook.pem
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /certs
+      restartPolicy: OnFailure
+      volumes:
+      - name: webhook-certs
+        emptyDir: {}
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: ingress-nginx-admission
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: admission-webhook
+webhooks:
+- name: admission.ingress-nginx.kubernetes.io
+  clientConfig:
+    service:
+      name: ingress-nginx-admission
+      namespace: toqqer-dev
+      path: "/validate"
+      port: 443
+    caBundle: <base64-encoded-CA-cert>  # Replace with actual CA after job runs
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["networking.k8s.io"]
+    apiVersions: ["v1"]
+    resources: ["ingresses"]
+  failurePolicy: Fail
+  admissionReviewVersions: ["v1","v1beta1"]
+  sideEffects: None
