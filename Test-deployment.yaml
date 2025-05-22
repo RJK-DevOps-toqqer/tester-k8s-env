@@ -332,7 +332,7 @@ webhooks:
       namespace: toqqer-dev
       path: "/validate"
       port: 443
-    caBundle: <REPLACE_WITH_BASE64_CA_CERT>
+    caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0t...
   rules:
   - operations: ["CREATE", "UPDATE"]
     apiGroups: ["networking.k8s.io"]
