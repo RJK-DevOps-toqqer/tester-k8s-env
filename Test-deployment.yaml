@@ -414,8 +414,5 @@ spec:
               path: token
               expirationSeconds: 3600
               audience: api
-          - secret: # This 'secret' type is for projection, not a literal secret. It's used here to ensure the path exists for the CA file.
-              name: dummy-secret # Use a dummy name, as the actual file is created by the previous job
-              path: ca.crt.out # This will be the path to the ca.crt.out file
   backoffLimit: 5 # This backoff is for the Job itself if the patch command fails, not for the internal wait.
 
