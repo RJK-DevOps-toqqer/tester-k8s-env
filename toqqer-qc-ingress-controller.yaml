@@ -1,104 +1,65 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: toqqer-qc
-
----
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: nginx-ingress
-  namespace: toqqer-qc
-
----
-
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  namespace: toqqer-qc
-  name: ingress-role
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "events"]
-    verbs: ["get", "list", "watch", "create", "patch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingressclasses", "ingresses"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses/status"]
-    verbs: ["update", "patch"]
-
----
-
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  namespace: toqqer-qc
-  name: ingress-role-binding
-subjects:
-  - kind: ServiceAccount
-    name: nginx-ingress
-    namespace: toqqer-qc
-roleRef:
-  kind: Role
-  name: ingress-role
-  apiGroup: rbac.authorization.k8s.io
-
----
-
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: nginx-ingress-role
-rules:
-  - apiGroups: [""]
-    resources: ["nodes", "services", "endpoints", "secrets", "configmaps"]
-    verbs: ["list", "get", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingressclasses", "ingresses"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses/status"]
-    verbs: ["update", "patch"]
-
----
-
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: nginx-ingress-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: nginx-ingress-role
-subjects:
-  - kind: ServiceAccount
-    name: nginx-ingress
-    namespace: toqqer-qc
-
----
-
-apiVersion: networking.k8s.io/v1
-kind: IngressClass
-metadata:
-  name: nginx
-spec:
-  controller: k8s.io/ingress-nginx
-
----
-
-apiVersion: v1
-kind: ConfigMap
+apiVersion: apps/v1
+kind: DaemonSet
 metadata:
   name: nginx-ingress-controller
   namespace: toqqer-qc
-data:
-  use-forwarded-headers: "true"
-  proxy-body-size: "50m"
+spec:
+  selector:
+    matchLabels:
+      app: nginx-ingress
+  template:
+    metadata:
+      labels:
+        app: nginx-ingress
+    spec:
+      serviceAccountName: nginx-ingress
+      containers:
+        - name: nginx-ingress
+          image: registry.k8s.io/ingress-nginx/controller:v1.10.0
+          args:
+            - /nginx-ingress-controller
+            - --ingress-class=nginx
+            - --enable-ssl-passthrough
+            - --configmap=$(POD_NAMESPACE)/nginx-ingress-controller
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: http
+              containerPort: 80
+            - name: https
+              containerPort: 443
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-ingress-controller
+  namespace: toqqer-qc
+spec:
+  type: NodePort  # Use NodePort if LoadBalancer is not available
+  selector:
+    app: nginx-ingress
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
