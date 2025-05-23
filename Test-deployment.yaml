@@ -281,6 +281,35 @@ spec:
     app.kubernetes.io/name: ingress-nginx
 
 ---
+# ValidatingWebhookConfiguration must exist before the patch job tries to modify it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: ingress-nginx-admission
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: admission-webhook
+webhooks:
+- name: admission.ingress-nginx.kubernetes.io
+  clientConfig:
+    service:
+      name: ingress-nginx-admission
+      namespace: toqqer-dev
+      path: "/validate"
+      port: 443
+    # caBundle will be patched by the ingress-nginx-admission-patch job
+    caBundle: ""
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["networking.k8s.io"]
+    apiVersions: ["v1"]
+    resources: ["ingresses"]
+  failurePolicy: Fail
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+
+---
+# This Job creates the certificates. It must run before the patch job.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -305,39 +334,88 @@ spec:
         - /bin/sh
         - -c
         - >
-          mkdir -p /certs && 
-          /usr/local/bin/kube-webhook-certgen create --host ingress-nginx-admission.toqqer-dev.svc --cert-dir /certs && 
-          cp /certs/tls.crt /certs/tls.key /certs/ca.crt /certs/webhook.pem
+          mkdir -p /certs &&
+          /usr/local/bin/kube-webhook-certgen create --host ingress-nginx-admission.toqqer-dev.svc --cert-dir /certs &&
+          # Copy only ca.crt to a location accessible by the next job/script
+          cp /certs/ca.crt /var/run/secrets/kubernetes.io/serviceaccount/ca.crt.out
         volumeMounts:
         - name: webhook-certs
           mountPath: /certs
+        # Mount service account token to allow writing to this path
+        - name: service-account-token
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: false
       restartPolicy: OnFailure
       volumes:
       - name: webhook-certs
         emptyDir: {}
+      - name: service-account-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 3600
+              audience: api
 
 ---
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
+# This Job patches the ValidatingWebhookConfiguration. It depends on the create job having run.
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: ingress-nginx-admission
+  name: ingress-nginx-admission-patch
+  namespace: toqqer-dev
   labels:
     app.kubernetes.io/name: ingress-nginx
     app.kubernetes.io/component: admission-webhook
-webhooks:
-- name: admission.ingress-nginx.kubernetes.io
-  clientConfig:
-    service:
-      name: ingress-nginx-admission
-      namespace: toqqer-dev
-      path: "/validate"
-      port: 443
-    caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0t...
-  rules:
-  - operations: ["CREATE", "UPDATE"]
-    apiGroups: ["networking.k8s.io"]
-    apiVersions: ["v1"]
-    resources: ["ingresses"]
-  failurePolicy: Fail
-  admissionReviewVersions: ["v1"]
-  sideEffects: None
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ingress-nginx
+        app.kubernetes.io/component: admission-webhook
+    spec:
+      serviceAccountName: ingress-nginx-admission
+      containers:
+      - name: patch
+        image: bitnami/kubectl:1.29.0 # Use a kubectl image or any image with `curl` and `jq`
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NAMESPACE
+          value: toqqer-dev
+        command:
+        - /bin/sh
+        - -c
+        - >
+          # Attempt to read ca.crt.out; loop if not found (due to create job not finished yet)
+          MAX_RETRIES=60 # Roughly 1 minute at 1 second intervals
+          RETRY_COUNT=0
+          while [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt.out ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "Waiting for ca.crt.out to be created by ingress-nginx-admission-create job (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
+            sleep 1
+            RETRY_COUNT=$((RETRY_COUNT+1))
+          done
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt.out ]; then
+            echo "Error: ca.crt.out not found after maximum retries. Exiting."
+            exit 1
+          fi
+          CA_BUNDLE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/ca.crt.out | base64 -w0) &&
+          # Patch the ValidatingWebhookConfiguration with the dynamically generated caBundle
+          kubectl patch validatingwebhookconfiguration ingress-nginx-admission --type='json' -p="[{\"op\": \"replace\", \"path\": \"/webhooks/0/clientConfig/caBundle\", \"value\":\"${CA_BUNDLE}\"}]"
+        volumeMounts:
+        - name: service-account-token
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: false
+      restartPolicy: OnFailure
+      volumes:
+      - name: service-account-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 3600
+              audience: api
+          - secret: # This 'secret' type is for projection, not a literal secret. It's used here to ensure the path exists for the CA file.
+              name: dummy-secret # Use a dummy name, as the actual file is created by the previous job
+              path: ca.crt.out # This will be the path to the ca.crt.out file
+  backoffLimit: 5 # This backoff is for the Job itself if the patch command fails, not for the internal wait.
+
