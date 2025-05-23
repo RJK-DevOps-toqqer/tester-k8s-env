@@ -1,0 +1,273 @@
+---
+- name: Run Kubernetes setup using shell commands (with overrides)
+  hosts: testnodes
+  become: yes
+  vars:
+    kubeconfig_dest: "/home/{{ ansible_user }}/.kube/config"
+    yaml_file_path: "/home/{{ ansible_user }}/custom-resources.yaml"
+  tasks:
+    - name: Free memory and turn off swap
+      shell: |
+        free -h
+        swapoff -a
+
+    - name: Load necessary modules for containerd (overwrite containerd.conf)
+      shell: |
+        cat > /etc/modules-load.d/containerd.conf <<EOF
+        overlay
+        br_netfilter
+        EOF
+
+    - name: Modprobe overlay
+      shell: modprobe overlay
+
+    - name: Modprobe br_netfilter
+      shell: modprobe br_netfilter
+
+    - name: Configure Kubernetes sysctl settings (overwrite config)
+      shell: |
+        cat <<EOF | tee /etc/sysctl.d/99-kubernetes-cri.conf > /dev/null
+        net.bridge.bridge-nf-call-iptables  = 1
+        net.ipv4.ip_forward                 = 1
+        net.bridge.bridge-nf-call-ip6tables = 1
+        EOF
+
+    - name: Apply sysctl settings
+      shell: sysctl --system
+
+    - name: Install necessary dependencies
+      shell: |
+        apt-get update
+        apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+
+    - name: Download Docker GPG key
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /tmp/docker.gpg
+        mode: '0644'
+
+    - name: Convert Docker GPG key to keyring format
+      shell: gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Set permissions on Docker keyring
+      file:
+        path: /etc/apt/keyrings/docker.gpg
+        mode: '0644'
+
+    - name: Add Docker repository to apt sources (overwrite docker.list)
+      shell: |
+        bash -c "echo \"deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \\\"$VERSION_CODENAME\\\") stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
+
+    - name: Update apt sources
+      shell: apt update
+
+    - name: Install containerd.io
+      shell: apt install -y containerd.io
+
+    - name: Configure containerd (overwrite config.toml)
+      shell: |
+        mkdir -p /etc/containerd
+        containerd config default | tee /etc/containerd/config.toml > /dev/null
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+    - name: Restart containerd
+      shell: systemctl restart containerd
+
+    - name: Configure crictl (overwrite crictl.yaml)
+      shell: |
+        cat <<EOF | tee /etc/crictl.yaml > /dev/null
+        runtime-endpoint: unix:///run/containerd/containerd.sock
+        image-endpoint: unix:///run/containerd/containerd.sock
+        timeout: 2
+        EOF
+
+    - name: Download Kubernetes GPG key
+      get_url:
+        url: https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key
+        dest: /tmp/kubernetes-release.key
+        mode: '0644'
+
+    - name: Convert Kubernetes GPG key to keyring format
+      shell: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/kubernetes-release.key
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Set permissions on Kubernetes keyring
+      file:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        mode: '0644'
+
+    - name: Add Kubernetes apt repository
+      shell: |
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list > /dev/null
+
+    - name: Update apt cache
+      shell: apt-get update
+
+    - name: Install Kubernetes packages
+      shell: |
+        apt-get install -y kubelet kubeadm kubectl
+        apt-mark hold kubelet kubeadm kubectl
+
+    - name: Initialize Kubernetes master node
+      shell: kubeadm init --apiserver-advertise-address={{ ansible_host }} --cri-socket=unix:///run/containerd/containerd.sock --pod-network-cidr=10.244.0.0/16
+
+    - name: Create .kube directory
+      file:
+        path: "/home/{{ ansible_user }}/.kube"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: Copy admin.conf to user's kube config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ kubeconfig_dest }}"
+        remote_src: yes
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+
+    - name: Deploy Calico operator
+      shell: |
+        kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.0/manifests/tigera-operator.yaml
+      environment:
+        KUBECONFIG: "{{ kubeconfig_dest }}"
+
+    - name: Wait until Calico CRDs are registered
+      shell: kubectl get crd installations.operator.tigera.io
+      register: crd_check
+      retries: 10
+      delay: 10
+      until: crd_check.rc == 0
+      environment:
+        KUBECONFIG: "{{ kubeconfig_dest }}"
+
+    - name: Download Calico custom resources YAML
+      get_url:
+        url: https://raw.githubusercontent.com/projectcalico/calico/v3.30.0/manifests/custom-resources.yaml
+        dest: "{{ yaml_file_path }}"
+        mode: '0644'
+
+    - name: Replace CIDR in YAML file
+      ansible.builtin.replace:
+        path: "{{ yaml_file_path }}"
+        regexp: '192\.168\.0\.0/16'
+        replace: '10.244.0.0/16'
+        backup: yes
+
+    - name: Apply updated YAML using kubectl
+      command: kubectl apply -f {{ yaml_file_path }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig_dest }}"
+
+    - name: Get control plane node name
+      command: kubectl get nodes --selector='node-role.kubernetes.io/control-plane' -o jsonpath='{.items[0].metadata.name}'
+      register: control_plane_node
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig_dest }}"
+
+    - name: Remove NoSchedule taint from control plane node
+      command: >
+        kubectl taint nodes {{ control_plane_node.stdout }} node-role.kubernetes.io/control-plane- --overwrite
+      register: taint_removal
+      changed_when: "'tainted' in taint_removal.stdout or 'already' not in taint_removal.stdout"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_dest }}"
+
+    - name: Show result of taint removal
+      debug:
+        var: taint_removal.stdout
+
+    - name: Ensure local .kube directory exists
+      delegate_to: localhost
+      file:
+        path: "{{ lookup('env','HOME') }}/.kube"
+        state: directory
+        mode: '0755'
+        owner: "{{ lookup('env','USER') }}"
+        group: "{{ lookup('env','USER') }}"
+
+    - name: Ensure local .kube directory ownership and permissions are correct
+      delegate_to: localhost
+      file:
+        path: "{{ lookup('env','HOME') }}/.kube"
+        owner: "{{ lookup('env','USER') }}"
+        group: "{{ lookup('env','USER') }}"
+        mode: '0755'
+        recurse: yes
+
+    - name: Fetch kubeconfig as config-remote
+      fetch:
+        src: "{{ kubeconfig_dest }}"
+        dest: "{{ lookup('env','HOME') }}/.kube/config-remote"
+        flat: yes
+
+    - name: Fix permissions on local kubeconfig file
+      delegate_to: localhost
+      file:
+        path: "{{ lookup('env','HOME') }}/.kube/config-remote"
+        owner: "{{ lookup('env','USER') }}"
+        group: "{{ lookup('env','USER') }}"
+        mode: '0600'
+
+- name: Apply Kubernetes manifests from local machine to remote cluster
+  hosts: localhost
+  become: yes
+  vars:
+    local_repo_path: "{{ lookup('env','HOME') }}/app-manifests"
+    kubeconfig_path: "{{ lookup('env','HOME') }}/.kube/config-remote"
+  tasks:
+    - name: Ensure Git is installed
+      delegate_to: localhost
+      ansible.builtin.package:
+        name: git
+        state: present
+
+    - name: Clone manifest repo locally
+      delegate_to: localhost
+      ansible.builtin.git:
+        repo: https://github.com/RJK-DevOps-toqqer/tester-k8s-env.git
+        dest: "{{ local_repo_path }}"
+        version: main
+        force: yes
+
+    - name: Download and convert Kubernetes APT GPG key to keyring format (localhost)
+      delegate_to: localhost
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Set permissions on Kubernetes keyring
+      file:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        mode: '0644'
+
+    - name: Add Kubernetes apt repository
+      shell: |
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list > /dev/null
+
+    - name: Update apt cache
+      shell: apt-get update
+
+    - name: Install kubectl on localhost
+      delegate_to: localhost
+      apt:
+        name: kubectl
+        state: present
+        update_cache: yes
+
+    - name: Apply deployment.yaml
+      shell: kubectl apply -f {{ local_repo_path }}/toqqer-qc-permission.yaml
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Apply deployment.yaml
+      shell: kubectl apply -f {{ local_repo_path }}/toqqer-qc-ingress-controller.yaml
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
