@@ -5,7 +5,6 @@ metadata:
   namespace: toqqer-test
 spec:
   replicas: 1
-  revisionHistoryLimit: 5
   selector:
     matchLabels:
       app: cms
@@ -18,75 +17,9 @@ spec:
         - key: "node-role.kubernetes.io/master"
           operator: "Exists"
           effect: "NoSchedule"
-      volumes:
-        - name: persistent-storage
-          persistentVolumeClaim:
-            claimName: toqqer-test-pvc
       containers:
         - name: cms
-          image: toqqer/toqqer:ovh20
-          imagePullPolicy: IfNotPresent
-          command: [ "/bin/bash", "-c", "--" ]
-          args: [ "java -jar CMS-Service-0.0.1-SNAPSHOT.jar" ]
-          envFrom: []
-          env:
-            - name: jwt-tokenValidity
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: jwt-tokenValidity } }
-            - name: spring-datasource-driver-class-name
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-datasource-driver-class-name } }
-            - name: spring-datasource-username
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-datasource-username } }
-            - name: spring-datasource-password
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-datasource-password } }
-            - name: spring-mail-host
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-host } }
-            - name: spring-mail-port
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-port } }
-            - name: spring-mail-username
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-username } }
-            - name: spring-mail-password
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-password } }
-            - name: spring-mail-properties-mail-smtp-auth
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-properties-mail-smtp-auth } }
-            - name: spring-mail-properties-mail-smtp-connectiontimeout
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-properties-mail-smtp-connectiontimeout } }
-            - name: spring-mail-properties-mail-smtp-timeout
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-properties-mail-smtp-timeout } }
-            - name: spring-mail-properties-mail-smtp-writetimeout
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-properties-mail-smtp-writetimeout } }
-            - name: spring-mail-properties-mail-smtp-starttls-enable
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: spring-mail-properties-mail-smtp-starttls-enable } }
-            - name: keyId
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: keyId } }
-            - name: encKey
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: encKey } }
-            - name: pssh
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: pssh } }
-            - name: appId
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: appId } }
-            - name: appSecretKey
-              valueFrom: { secretKeyRef: { name: toqqer-secret, key: appSecretKey } }
+          image: python:3.11-slim
+          command: ["python3", "-m", "http.server", "8080"]
           ports:
-            - containerPort: 8012
-          volumeMounts:
-            - name: persistent-storage
-              mountPath: "/data"
-          resources:
-            requests:
-              cpu: 100m
-              memory: 100M
-              ephemeral-storage: "1Gi"     # <-- add this
-            limits:
-              cpu: 600m
-              memory: 1600M
-              ephemeral-storage: "2Gi" 
-          readinessProbe:
-            tcpSocket:
-              port: 8012
-            initialDelaySeconds: 120
-            periodSeconds: 30
-          livenessProbe:
-            tcpSocket:
-              port: 8012
-            initialDelaySeconds: 120
-            periodSeconds: 20
+            - containerPort: 8080
